@@ -1,7 +1,10 @@
 from bs4 import BeautifulSoup
 from urllib2 import urlopen
+from urllib import urlencode
 import sqlite3
 from os import remove
+import re
+from pprint import pprint
 
 BASE_URL = "http://ptv.vic.gov.au/timetables"
 BASE_STOPS_URL = "http://ptv.vic.gov.au/timetables/line/%s"
@@ -9,7 +12,11 @@ BASE_TIMETABLE_URL = "http://ptv.vic.gov.au/timetables/linemain/%s"
 BASE_LINE_URL = "http://ptv.vic.gov.au/route/view/"
 STOP_URL = "http://ptv.vic.gov.au/stop/view/"
 STOP_SUBURB_LIST = "http://ptv.vic.gov.au/getting-around/stations-and-stops/metropolitan-trains/"
-TEST_RUN = True
+TEST_RUN = False
+
+STOP_SKIPPED = "|"
+STOP_IGNORE = " "
+STOP_NOT_IN_RUN = "-"
 
 def populate_train_lines(test_run=False):
 	# Populate train_lines
@@ -32,10 +39,41 @@ def populate_train_lines(test_run=False):
 		cursor.executemany("INSERT INTO train_lines VALUES (?,?,NULL)", lines)
 		conn.commit()
 
-	for line in lines:
-		process_line(line,test_run)
+	
+		
+def populate_stops(test_run=False):
+	conn = sqlite3.connect("ptv.db") 
+	cursor = conn.cursor()
+	lines = cursor.execute("""
+		SELECT line_id, line_name 
+		FROM train_lines
+		""").fetchall()
 
-def process_line(line,test_run=False):
+	line_codes = [
+		(1,"Alemain","ALM"),
+		(2,"Belgrave","BEL"),
+		(3,"Craigieburn","BDM"),
+		(4,"Cranbourne","CRB"),
+		(5,"South Morang","EPP"),
+		(6,"Frankston","FKN"),
+		(7,"Glen Waverly","GLW"),
+		(8,"Hurstbridge","HBG"),
+		(9,"Lilydale","LIL"),
+		(11,"Pakenham","PKM"),
+		(12,"Sandringham","SDM"),
+		(13,"Stony Point","STP"),
+		(14,"Sunbury","SYM"),
+		(15,"Upfield","UFD"),
+		(16,"Werribee","WBE"),
+		(17,"Williamstown","WMN"),
+		(1482,"Flemington Showgrounds / Flemington Racecourse","AIN"),
+	]
+	run_id = 0
+	for line in lines:
+		for code in line_codes:
+			if code[0] == line[0]:
+				run_id = process_line(line,code,run_id,test_run)
+def process_line(line,code,run_id,test_run=False):
 	# Load Line page to get line url numbers for each direction
 	
 
@@ -53,25 +91,7 @@ def process_line(line,test_run=False):
 	day = "T0" # Mon-Fri
 	direction_to_city = "R"
 	direction_from_city = "H"
-	line_codes = [
-	(1,"Alemain","ALM"),
-	(2,"Belgrave","BEL"),
-	(3,"Craigieburn","BDM"),
-	(4,"Cranbourne","CRB"),
-	(5,"South Morang","EPP"),
-	(6,"Frankston","FKN"),
-	(7,"Glen Waverly","GLW"),
-	(8,"Hurstbridge","HBG"),
-	(9,"Lilydale","LIL"),
-	(11,"Pakenham","PKM"),
-	(12,"Sandringham","SDM"),
-	(13,"Stony Point","STP"),
-	(14,"Sunbury","SYM"),
-	(15,"Upfield","UFD"),
-	(16,"Werribee","WBE"),
-	(17,"Williamstown","WMN"),
-	(1482,"Flemington Showgrounds / Flemington Racecourse","AIN"),
-	]
+	
 
 
 	post_data_dictionary = {
@@ -81,64 +101,165 @@ def process_line(line,test_run=False):
 	"project":"ttb",
 	"contentFilter":"ALLSTOPS",
 	"outputFormat":0,
-	"line":"02%S",
+	"line":"02%s" % (code[2],),
 	"itdLPxx_selLineDir": direction_from_city,
 	"sup":time_period,
 	"itdLPxx_selWDType":"T0",
 	"actionChoose":"GO"
 	}
 
-	print "Processing Stops for %s" % (line[1],)
-	html = urlopen(BASE_TIMETABLE_URL % line[0]).read()
-	soup = BeautifulSoup(html)
-	stop_table = soup.find(id="ttTable")
+	print "Processing Stops for the %s Line (timetables/linemain/%s):" % (line[1],code[0])
 	
-	
-def process_stops(direction_id,line,direction_text):
-	time_period = "E" # 30 May 2014 until further notice
-	day = "T0" # Mon-Fri
-	direction_to_city = "R"
-	direction_from_city = "H"
-	line_codes = [
-	(1,"Alemain","ALM"),
-	(2,"Belgrave","BEL"),
-	(3,"Craigieburn","BDM"),
-	(4,"Cranbourne","CRB"),
-	(5,"South Morang","EPP"),
-	(6,"Frankston","FKN"),
-	(7,"Glen Waverly","GLW"),
-	(8,"Hurstbridge","HBG"),
-	(9,"Lilydale","LIL"),
-	(11,"Pakenham","PKM"),
-	(12,"Sandringham","SDM"),
-	(13,"Stony Point","STP"),
-	(14,"Sunbury","SYM"),
-	(15,"Upfield","UFD"),
-	(16,"Werribee","WBE"),
-	(17,"Williamstown","WMN"),
-	(1482,"Flemington Showgrounds / Flemington Racecourse","AIN"),
-	]
-
-
-	post_data_dictionary = {
-	'language':'en', 
-	"command":'direct', 
-	"net":"vic",
-	"project":"ttb",
-	"contentFilter":"ALLSTOPS",
-	"outputFormat":0,
-	"line":"02%S",
-	"itdLPxx_selLineDir": direction_from_city,
-	"sup":time_period,
-	"itdLPxx_selWDType":"T0",
-	"actionChoose":"GO"
-	}
-
-	print "Processing Stops for %s : %s" % (line[1],direction_text)
-	html = urlopen(BASE_STOPS_URL % direction_id).read()
+	data = urlencode(post_data_dictionary)
+	html = urlopen(BASE_TIMETABLE_URL % line[0], data).read()
 	soup = BeautifulSoup(html)
 	stop_table = soup.find(id="ttTable")
 
+	# Calculate direction id
+	
+	direction_soup = soup.find(id="itdLPxx_selLineDir")
+	direction_name = direction_soup.find_all('option', selected=True)[0].get_text().replace("To ","")
+	print direction_name
+	conn = sqlite3.connect("ptv.db")
+	cursor = conn.cursor()
+	direction_id = cursor.execute("""
+		SELECT direction_id 
+		FROM train_direction 
+		WHERE direction_name = ?
+		""", (direction_name,)).fetchone()[0]
+	return process_stops(stop_table, run_id, code[0], direction_id)
+	
+	
+	
+def process_stops(table_soup, run_id, line_id, direction_id):
+	# Get list of stations in line from margin of table
+	margin = table_soup.find(id="ttMargin")
+	station_list = [x.getText() for x in margin.select(".ttMarginTP .ma_stop a")]
+	suburb_regex = re.compile("\((.*)\)")
+	name_regex = re.compile("(^.*)(?=\sStation\s\()")
+	clean_station_list = []
+	for station in station_list:
+		suburb = suburb_regex.search(station).groups()[0]
+		name = name_regex.search(station).groups()[0]
+		clean_station_list.append(name)
+		print " - %s Station (%s)" % (name,suburb)
+
+	# Start getting runs
+	tt_body = table_soup.find(id="ttBody")
+	rows = tt_body.select(".ttBodyTP")
+	current_stop_list = []
+	pm = False
+	col = 0
+	run_total = len(rows[0].select("div"))
+	processed_runs = []
+	previous_was_stop = False
+	while(col < run_total):
+		current_col = []
+		# Check if we are in AM or PM section by looking for bold text
+		for row in rows:
+			cell = row.findAll("div")[col].find("span")
+			if cell.find("b") != None:
+				pm = True
+			else: 
+				pm = False
+			current_col.append(cell.getText())
+		
+		conn = sqlite3.connect("ptv.db")
+		cursor = conn.cursor()
+		
+		# Do work with column here
+		
+		# Set up vars for loop
+		# stop_final_format = [line_id, stop_id, run_id, time, destination_id, num_skipped, direction, flags]
+		previous_stop = [0,0,0,0,0,0,0,""]
+
+		# Total of cells not in run
+		excluded_total = 0
+
+		# Container to hold stop info for run
+		final_run = []
+		for index, stop in enumerate(current_col):
+
+			# Resets
+			time_in_ms = 0
+
+			# Clean up text before processing:
+			stop = stop.encode('utf-8').replace('\xc2\xa0'," ")
+
+			if stop == STOP_SKIPPED:
+				# Add to count of skipped for most recent stop
+				previous_stop[5] += 1
+
+			elif stop == STOP_NOT_IN_RUN and previous_stop[0] != 0:
+				# stop isn't in run and the previous stop is not blank
+				# meaning it isn't at the start of a run and is just after 
+				# a real stop
+				if previous_stop[7] != "" and "E" not in previous_stop[7]:
+					previous_stop[7] += " E"
+				elif "E" not in previous_stop[7]:
+					previous_stop[7] = "E"
+
+			elif stop == STOP_NOT_IN_RUN:
+				# Not in run and not immediately after a real stop
+				excluded_total += 1
+			elif stop ==" ":
+				# This usually means the run is going the opposite way around the loop.
+				1 == 1
+			else:
+				# We have a real stop to add and already have line_id and run_id 
+				 
+				# Get stop_id
+				stop_id = cursor.execute("""SELECT train_locations.location_id 
+					FROM train_locations 
+					WHERE train_locations.location_name =? """,(clean_station_list[index],)).fetchone()[0]
+
+				# Calculate time in seconds
+				if pm == True:
+					# Add 12 hours for conversion
+					time_in_ms = convertTimeToMilliseconds(stop,pm)
+				else:
+					time_in_ms = convertTimeToMilliseconds(stop)
+
+				# Destination will be calculated at end of loop
+				# num_skipped is calculated earlier in loop
+				# flags is calculated earlier in loop
+				 
+				# We can now commit the previous stop to the final list
+				if previous_stop[0] != 0:
+					# Unless it is still blank from init
+					final_run.append(previous_stop)
+
+				# Set current stop to previous for next loop
+				previous_stop = [line_id, stop_id, run_id, time_in_ms, 0, 0, direction_id, "" ]
+
+			if index == len(current_col) - 1:
+				# Final cell in columm 
+				# Calculate destination_id and add to final_run results
+				
+				# Add final stop to run
+				final_run.append(previous_stop)
+
+				# Destination = last stop's id
+				destination = previous_stop[1]
+				for x in final_run:
+					x[4] = destination
+
+				pprint(final_run)
+
+		# Increment loop values for calculations
+		col += 1
+		run_id += 1
+
+	return run_id
+
+
+
+def convertTimeToMilliseconds(time,pm = False):
+	time_parts = [int(x) for x in time.split(":")]	
+	if pm == True:
+		return ((time_parts[0] + 12) * 60 * 60) + (time_parts[1] * 60)
+	else:
+		return (time_parts[0] * 60 * 60) + (time_parts[1] * 60)
 
 def populate_directions(test_run=False):
 	# Populate directions
@@ -325,7 +446,7 @@ def prepare_db(rm_db=True):
 	)""")
 
 	cursor.execute(""" CREATE TABLE IF NOT EXISTS train_direction (
-		direction_id INTEGER,
+		direction_id INTEGER PRIMARY KEY AUTOINCREMENT,
 		direction_name TEXT
 	)""")
 
@@ -431,4 +552,4 @@ if __name__ == '__main__':
 	populate_train_lines(TEST_RUN)
 	populate_directions(TEST_RUN)
 	populate_locations(TEST_RUN)
-	
+	populate_stops(TEST_RUN)
