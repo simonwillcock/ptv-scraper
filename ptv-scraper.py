@@ -45,7 +45,7 @@ def populate_stops(test_run=False):
 	conn = sqlite3.connect("ptv.db") 
 	cursor = conn.cursor()
 	lines = cursor.execute("""
-		SELECT line_id, line_name 
+		SELECT _id, line_name 
 		FROM train_lines
 		""").fetchall()
 
@@ -73,6 +73,7 @@ def populate_stops(test_run=False):
 		for code in line_codes:
 			if code[0] == line[0]:
 				run_id = process_line(line,code,run_id,test_run)
+				
 def process_line(line,code,run_id,test_run=False):
 	# Load Line page to get line url numbers for each direction
 	
@@ -84,51 +85,70 @@ def process_line(line,code,run_id,test_run=False):
 		# anchor = item.find("a", href=True)
 		# direction_id = anchor['href'].replace("timetables/line/","")
 		# process_stops(direction_id,line,anchor.getText())
-
-
-
-	time_period = "E" # 30 May 2014 until further notice
-	day = "T0" # Mon-Fri
 	direction_to_city = "R"
 	direction_from_city = "H"
-	
+	directions = [direction_to_city,direction_from_city]
+	print "Processing Stops for the %s Line - %s:" % (line[1],code[0])
+	for direction in directions:
+		# print "  - %s" % (direction,)
+
+		soup = get_timetable_page_soup(line, direction, code)
+
+		stop_table = soup.find(id="ttTable")
+
+		# Calculate direction id
+		
+		direction_soup = soup.find(id="itdLPxx_selLineDir")
+		direction_name = direction_soup.find_all('option', selected=True)[0].get_text().replace("To ","")
+		print "   To %s" % direction_name
+		conn = sqlite3.connect("ptv.db")
+		cursor = conn.cursor()
+		direction_id = cursor.execute("""
+			SELECT _id 
+			FROM train_direction 
+			WHERE direction_name = ?
+			""", (direction_name,)).fetchone()[0]
+		run_id = process_stops(stop_table, run_id, code[0], direction_id)
+		
+	return run_id
+
+def get_timetable_page_soup(line, direction, code):
+	# Sometimes the time-periods in the dropdown are different.
+	# This will return the soup of the latest time-period
+	is_good_data = False
+	time_periods = ["E","D","C","B","A"," "]
+	while (is_good_data == False):
+		
+		day = "T0" # Mon-Fri
+		
+		post_data_dictionary = {
+		'language':'en', 
+		"command":'direct', 
+		"net":"vic",
+		"project":"ttb",
+		"contentFilter":"ALLSTOPS",
+		"outputFormat":0,
+		"line":"02%s" % (code[2],),
+		"itdLPxx_selLineDir": direction,
+		"sup":time_periods[0],
+		"itdLPxx_selWDType":"T0",
+		"actionChoose":"GO"
+		}
+
+		
+		
+		data = urlencode(post_data_dictionary)
+		
+		html = urlopen(BASE_TIMETABLE_URL % line[0], data).read()
+		soup = BeautifulSoup(html)
+
+		if soup.find("strong") != None:
+			del time_periods[0]
+			print "  --- Failed. Trying %s" % time_periods[0]
+		else:
+			return soup
 
 
-	post_data_dictionary = {
-	'language':'en', 
-	"command":'direct', 
-	"net":"vic",
-	"project":"ttb",
-	"contentFilter":"ALLSTOPS",
-	"outputFormat":0,
-	"line":"02%s" % (code[2],),
-	"itdLPxx_selLineDir": direction_from_city,
-	"sup":time_period,
-	"itdLPxx_selWDType":"T0",
-	"actionChoose":"GO"
-	}
-
-	print "Processing Stops for the %s Line (timetables/linemain/%s):" % (line[1],code[0])
-	
-	data = urlencode(post_data_dictionary)
-	html = urlopen(BASE_TIMETABLE_URL % line[0], data).read()
-	soup = BeautifulSoup(html)
-	stop_table = soup.find(id="ttTable")
-
-	# Calculate direction id
-	
-	direction_soup = soup.find(id="itdLPxx_selLineDir")
-	direction_name = direction_soup.find_all('option', selected=True)[0].get_text().replace("To ","")
-	print direction_name
-	conn = sqlite3.connect("ptv.db")
-	cursor = conn.cursor()
-	direction_id = cursor.execute("""
-		SELECT direction_id 
-		FROM train_direction 
-		WHERE direction_name = ?
-		""", (direction_name,)).fetchone()[0]
-	return process_stops(stop_table, run_id, code[0], direction_id)
-	
 	
 	
 def process_stops(table_soup, run_id, line_id, direction_id):
@@ -142,7 +162,7 @@ def process_stops(table_soup, run_id, line_id, direction_id):
 		suburb = suburb_regex.search(station).groups()[0]
 		name = name_regex.search(station).groups()[0]
 		clean_station_list.append(name)
-		print " - %s Station (%s)" % (name,suburb)
+		# print " - %s Station (%s)" % (name,suburb)
 
 	# Start getting runs
 	tt_body = table_soup.find(id="ttBody")
@@ -209,7 +229,7 @@ def process_stops(table_soup, run_id, line_id, direction_id):
 				# We have a real stop to add and already have line_id and run_id 
 				 
 				# Get stop_id
-				stop_id = cursor.execute("""SELECT train_locations.location_id 
+				stop_id = cursor.execute("""SELECT train_locations._id 
 					FROM train_locations 
 					WHERE train_locations.location_name =? """,(clean_station_list[index],)).fetchone()[0]
 
@@ -236,6 +256,12 @@ def process_stops(table_soup, run_id, line_id, direction_id):
 				# Final cell in columm 
 				# Calculate destination_id and add to final_run results
 				
+				# Check that we have added end flag in case the run ended at the end of a line
+				if previous_stop[7] != "" and "E" not in previous_stop[7]:
+					previous_stop[7] += " E"
+				elif "E" not in previous_stop[7]:
+					previous_stop[7] = "E"
+
 				# Add final stop to run
 				final_run.append(previous_stop)
 
@@ -244,12 +270,14 @@ def process_stops(table_soup, run_id, line_id, direction_id):
 				for x in final_run:
 					x[4] = destination
 
-				pprint(final_run)
+				# pprint(final_run)
 
 		# Increment loop values for calculations
 		col += 1
 		run_id += 1
-
+		cursor.executemany("""INSERT INTO train_stops_monfri VALUES (?,?,?,?,?,?,?,?)""", final_run)
+		conn.commit()
+		print "  --- %s runs added" % (run_total,)
 	return run_id
 
 
@@ -304,7 +332,7 @@ def populate_locations(test_run=False):
 	cursor.execute("""DELETE FROM train_linelocation""")
 
 	locations = cursor.execute("""
-		SELECT train_locations.location_id, train_locations.lines
+		SELECT train_locations._id, train_locations.lines
 		FROM train_locations""").fetchall()
 	for loc in locations:
 		# print loc
@@ -320,7 +348,7 @@ def populate_locations(test_run=False):
 		
 		for line in cleaned_lines:
 			line_id = cursor.execute("""
-			SELECT train_lines.line_id
+			SELECT train_lines._id
 			FROM train_lines
 			WHERE train_lines.line_name = ?
 			""",(line,)).fetchone()
@@ -367,18 +395,21 @@ def process_station(station_link, station_name, suburb_name):
 	html = urlopen(station_link).read()
 	soup = BeautifulSoup(html)
 
-	
+	# Get field data from page
 	location_name = station_name
 	suburb = suburb_name
 	address = soup.find("h1").findNext("div").find("p").getText().strip()
 	coordinates = soup.select("div.aside li")[0].find("a", href=True)["href"].replace("http://maps.google.com/?q=","").split(",")
 	stop_id = station_link.replace("http://ptv.vic.gov.au/getting-around/stations-and-stops/view/","")
+
 	zone_id = soup.select("table.stationSummary tr")[2].find("td").getText()
+	# Zones are either 1,2 or 4 (1/2)
 	if zone_id != "1" and zone_id != "2":
 		zone_id = 4
 	else:
 		zone_id = int(zone_id)
 	
+	# Get extra station info
 	staff_box = soup.select("div.phone-numbers")[0].findNextSibling("div")
 	staff = staff_box.find("dd").getText()
 	ticket_box = staff_box.findNextSibling("div")
@@ -396,23 +427,15 @@ def process_station(station_link, station_name, suburb_name):
 	else:
 		taxi = 0
 
+	# Find list of lines that pass through station
 	timetables = soup.select("div.expander")
 	lines = [line.getText().replace(" Line","") for line in timetables[0].findAll("a")]
-	# linelocations = []
-	# for line in lines:
-	# 	line_id = cursor.execute("""
-	# 	SELECT train_lines.line_id
-	# 	FROM train_lines
-	# 	WHERE train_lines.line_name = ?
-	# 	""",(line,)).fetchone()
 
-	# 	linelocation.append([line_id,])
 	lines_string = "/".join(lines)
 	
 	return [None,location_name, suburb, address, coordinates[0], coordinates[1], stop_id, 
 	zone_id, staff, myki_machines, myki_checks, vline_bookings, car_parking, taxi, lines_string]
 
-	# print station_list
 	
 
 
@@ -425,39 +448,39 @@ def prepare_db(rm_db=True):
 
 	cursor = conn.cursor()
 	
-
+	# Create tables
 	cursor.execute(""" CREATE TABLE IF NOT EXISTS train_linelocation (
 		line_id INTEGER,
 		location_id INTEGER,
-		FOREIGN KEY (line_id) REFERENCES train_lines(line_id)
-		FOREIGN KEY (location_id) REFERENCES train_locations(location_id)
+		FOREIGN KEY (line_id) REFERENCES train_lines(_id)
+		FOREIGN KEY (location_id) REFERENCES train_locations(_id)
 	)""")
 
 	cursor.execute(""" CREATE TABLE IF NOT EXISTS train_linedirection (
-		linedirection_id INTEGER PRIMARY KEY AUTOINCREMENT,
+		_id INTEGER PRIMARY KEY AUTOINCREMENT,
 		line_id INTEGER,
 		location_id INTEGER,
 		direction_id INTEGER,
-		daytype field INTEGER,
+		daytype INTEGER,
 		linedirection_line_id INTEGER,
-		FOREIGN KEY (line_id) REFERENCES train_lines(line_id)
-		FOREIGN KEY (location_id) REFERENCES train_locations(location_id)
-		FOREIGN KEY (direction_id) REFERENCES train_direction(direction_id)
+		FOREIGN KEY (line_id) REFERENCES train_lines(_id)
+		FOREIGN KEY (location_id) REFERENCES train_locations(_id)
+		FOREIGN KEY (direction_id) REFERENCES train_direction(_id)
 	)""")
 
 	cursor.execute(""" CREATE TABLE IF NOT EXISTS train_direction (
-		direction_id INTEGER PRIMARY KEY AUTOINCREMENT,
+		_id INTEGER PRIMARY KEY AUTOINCREMENT,
 		direction_name TEXT
 	)""")
 
 	cursor.execute(""" CREATE TABLE IF NOT EXISTS train_lines (
-		line_id INTEGER PRIMARY KEY AUTOINCREMENT,
+		_id INTEGER PRIMARY KEY AUTOINCREMENT,
 		line_name TEXT,
 		suburbs TEXT
 	)""")
 
 	cursor.execute(""" CREATE TABLE IF NOT EXISTS train_locations (
-		location_id INTEGER PRIMARY KEY,
+		_id INTEGER PRIMARY KEY,
 		location_name TEXT,
 		suburb TEXT,
 		address TEXT,
@@ -476,47 +499,47 @@ def prepare_db(rm_db=True):
 
 	cursor.execute(""" CREATE TABLE IF NOT EXISTS train_stops_monfri (
 		line_id INTEGER,
-		stop_id INTEGER,
+		location_id INTEGER,
 		run_id INTEGER,
 		time INTEGER,
-		destination INTEGER,
+		destination_location_id INTEGER,
 		num_skipped INTEGER,
 		direction INTEGER,
 		flags INTEGER,
-		FOREIGN KEY (line_id) REFERENCES train_lines(line_id),
-		FOREIGN KEY (stop_id) REFERENCES train_locations(location_id),
-		FOREIGN KEY (destination) REFERENCES train_locations(location_id),
-		FOREIGN KEY (direction) REFERENCES train_direction(direction_id)
+		FOREIGN KEY (line_id) REFERENCES train_lines(_id),
+		FOREIGN KEY (location_id) REFERENCES train_locations(_id),
+		FOREIGN KEY (destination_location_id) REFERENCES train_locations(_id),
+		FOREIGN KEY (direction) REFERENCES train_direction(_id)
 	)""")
 
 	cursor.execute(""" CREATE TABLE IF NOT EXISTS train_stops_sat (
 		line_id INTEGER,
-		stop_id INTEGER,
+		location_id INTEGER,
 		run_id INTEGER,
 		time INTEGER,
-		destination INTEGER,
+		destination_location_id INTEGER,
 		num_skipped INTEGER,
 		direction INTEGER,
 		flags INTEGER,
-		FOREIGN KEY (line_id) REFERENCES train_lines(line_id),
-		FOREIGN KEY (stop_id) REFERENCES train_locations(location_id),
-		FOREIGN KEY (destination) REFERENCES train_locations(location_id),
-		FOREIGN KEY (direction) REFERENCES train_direction(direction_id)
+		FOREIGN KEY (line_id) REFERENCES train_lines(_id),
+		FOREIGN KEY (location_id) REFERENCES train_locations(_id),
+		FOREIGN KEY (destination_location_id) REFERENCES train_locations(_id),
+		FOREIGN KEY (direction) REFERENCES train_direction(_id)
 	)""")
 
 	cursor.execute(""" CREATE TABLE IF NOT EXISTS train_stops_sun (
 		line_id INTEGER,
-		stop_id INTEGER,
+		location_id INTEGER,
 		run_id INTEGER,
 		time INTEGER,
-		destination INTEGER,
+		destination_location_id INTEGER,
 		num_skipped INTEGER,
 		direction INTEGER,
 		flags INTEGER,
-		FOREIGN KEY (line_id) REFERENCES train_lines(line_id),
-		FOREIGN KEY (stop_id) REFERENCES train_locations(location_id),
-		FOREIGN KEY (destination) REFERENCES train_locations(location_id),
-		FOREIGN KEY (direction) REFERENCES train_direction(direction_id)
+		FOREIGN KEY (line_id) REFERENCES train_lines(_id),
+		FOREIGN KEY (location_id) REFERENCES train_locations(_id),
+		FOREIGN KEY (destination_location_id) REFERENCES train_locations(_id),
+		FOREIGN KEY (direction) REFERENCES train_direction(_id)
 	)""")
 
 	cursor.execute(""" CREATE TABLE IF NOT EXISTS train_config (
@@ -530,13 +553,18 @@ def prepare_db(rm_db=True):
 	)""")
 
 	cursor.execute(""" CREATE TABLE IF NOT EXISTS fares (
-		fare_id INTEGER PRIMARY KEY AUTOINCREMENT,
+		_id INTEGER PRIMARY KEY AUTOINCREMENT,
 		zone_id INTEGER,
 		fare_type INTEGER,
 		fare_length INTEGER,
 		fare_amount REAL
 	)""")
 
+	# Add required android specific tables
+	cursor.execute("""CREATE TABLE IF NOT EXISTS"android_metadata" ("locale" TEXT DEFAULT 'en_US')""")
+	cursor.execute("""INSERT INTO "android_metadata" VALUES ('en_US')""")
+
+	# Add static data
 	fares = [
 	(1,1,2,3.58),(2,1,2,2.48),(4,1,2,6.06),
 	(1,2,2,1.79),(2,2,2,1.24),(4,2,2,3.03),
