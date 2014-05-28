@@ -12,7 +12,7 @@ BASE_TIMETABLE_URL = "http://ptv.vic.gov.au/timetables/linemain/%s"
 BASE_LINE_URL = "http://ptv.vic.gov.au/route/view/"
 STOP_URL = "http://ptv.vic.gov.au/stop/view/"
 STOP_SUBURB_LIST = "http://ptv.vic.gov.au/getting-around/stations-and-stops/metropolitan-trains/"
-TEST_RUN = False
+TEST_RUN = True
 
 STOP_SKIPPED = "|"
 STOP_IGNORE = " "
@@ -61,7 +61,7 @@ def populate_stops(test_run=False):
 		(9,"Lilydale","LIL"),
 		(11,"Pakenham","PKM"),
 		(12,"Sandringham","SDM"),
-		(13,"Stony Point","STP"),
+		(13,"Stony Point","SPT"),
 		(14,"Sunbury","SYM"),
 		(15,"Upfield","UFD"),
 		(16,"Werribee","WBE"),
@@ -73,10 +73,10 @@ def populate_stops(test_run=False):
 		for code in line_codes:
 			if code[0] == line[0]:
 				run_id = process_line(line,code,run_id,test_run)
-				
+
 def process_line(line,code,run_id,test_run=False):
 	# Load Line page to get line url numbers for each direction
-	
+	print "%s, %s, %s" % (line, code, run_id)
 
 	# html = urlopen(BASE_LINE_URL+str(line[0])).read()
 	# soup = BeautifulSoup(html)
@@ -116,7 +116,7 @@ def get_timetable_page_soup(line, direction, code):
 	# Sometimes the time-periods in the dropdown are different.
 	# This will return the soup of the latest time-period
 	is_good_data = False
-	time_periods = ["E","D","C","B","A"," "]
+	time_periods = ["D","E","C","B","A"," "]
 	while (is_good_data == False):
 		
 		day = "T0" # Mon-Fri
@@ -277,7 +277,7 @@ def process_stops(table_soup, run_id, line_id, direction_id):
 		run_id += 1
 		cursor.executemany("""INSERT INTO train_stops_monfri VALUES (?,?,?,?,?,?,?,?)""", final_run)
 		conn.commit()
-		print "  --- %s runs added" % (run_total,)
+	print "  --- %s runs added" % (run_total,)
 	return run_id
 
 
@@ -496,7 +496,7 @@ def prepare_db(rm_db=True):
 		taxi INTEGER,
 		lines TEXT
 	)""")
-
+	cursor.execute("""DELETE FROM train_stops_monfri""")
 	cursor.execute(""" CREATE TABLE IF NOT EXISTS train_stops_monfri (
 		line_id INTEGER,
 		location_id INTEGER,
@@ -562,9 +562,13 @@ def prepare_db(rm_db=True):
 
 	# Add required android specific tables
 	cursor.execute("""CREATE TABLE IF NOT EXISTS"android_metadata" ("locale" TEXT DEFAULT 'en_US')""")
-	cursor.execute("""INSERT INTO "android_metadata" VALUES ('en_US')""")
+	
+	
+	cursor.execute("""DELETE FROM android_metadata""")
+	cursor.execute("""DELETE FROM fares""")
 
 	# Add static data
+	cursor.execute("""INSERT INTO "android_metadata" VALUES ('en_US')""")
 	fares = [
 	(1,1,2,3.58),(2,1,2,2.48),(4,1,2,6.06),
 	(1,2,2,1.79),(2,2,2,1.24),(4,2,2,3.03),
