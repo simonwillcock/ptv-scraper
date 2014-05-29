@@ -5,6 +5,7 @@ import sqlite3
 from os import remove
 import re
 from pprint import pprint
+from __future__ import print_function
 
 BASE_URL = "http://ptv.vic.gov.au/timetables"
 BASE_STOPS_URL = "http://ptv.vic.gov.au/timetables/line/%s"
@@ -49,6 +50,7 @@ def populate_stops(test_run=False):
 		FROM train_lines
 		""").fetchall()
 
+	# 3 letter codes used in POST request
 	line_codes = [
 		(1,"Alemain","ALM"),
 		(2,"Belgrave","BEL"),
@@ -76,7 +78,7 @@ def populate_stops(test_run=False):
 
 def process_line(line,code,run_id,test_run=False):
 	# Load Line page to get line url numbers for each direction
-	print "%s, %s, %s" % (line, code, run_id)
+	# print "%s, %s, %s" % (line, code, run_id)
 
 	# html = urlopen(BASE_LINE_URL+str(line[0])).read()
 	# soup = BeautifulSoup(html)
@@ -97,12 +99,16 @@ def process_line(line,code,run_id,test_run=False):
 		stop_table = soup.find(id="ttTable")
 
 		# Calculate direction id
-		
 		direction_soup = soup.find(id="itdLPxx_selLineDir")
 		direction_name = direction_soup.find_all('option', selected=True)[0].get_text().replace("To ","")
+
 		print "   To %s" % direction_name
 		conn = sqlite3.connect("ptv.db")
 		cursor = conn.cursor()
+
+		# Special case fix for showgrounds naming differences
+		if direction_name == "Showgrounds/Flemington":
+			direction_name = "Showgrounds / Flemington Racecourse"
 		direction_id = cursor.execute("""
 			SELECT _id 
 			FROM train_direction 
@@ -121,6 +127,7 @@ def get_timetable_page_soup(line, direction, code):
 		
 		day = "T0" # Mon-Fri
 		
+		# Dict of data required for POST request
 		post_data_dictionary = {
 		'language':'en', 
 		"command":'direct', 
@@ -142,6 +149,8 @@ def get_timetable_page_soup(line, direction, code):
 		html = urlopen(BASE_TIMETABLE_URL % line[0], data).read()
 		soup = BeautifulSoup(html)
 
+		# Check if time period is valid. Different lines have different options
+		# If invalid, page has a string in <strong> tags which is tested below.
 		if soup.find("strong") != None:
 			del time_periods[0]
 			print "  --- Failed. Trying %s" % time_periods[0]
@@ -157,22 +166,29 @@ def process_stops(table_soup, run_id, line_id, direction_id):
 	station_list = [x.getText() for x in margin.select(".ttMarginTP .ma_stop a")]
 	suburb_regex = re.compile("\((.*)\)")
 	name_regex = re.compile("(^.*)(?=\sStation\s\()")
+
+	# Create list of tuples containing station name and suburb
 	clean_station_list = []
 	for station in station_list:
 		suburb = suburb_regex.search(station).groups()[0]
 		name = name_regex.search(station).groups()[0]
 		clean_station_list.append(name)
-		# print " - %s Station (%s)" % (name,suburb)
+		
 
-	# Start getting runs
+	# Break table into columns
 	tt_body = table_soup.find(id="ttBody")
 	rows = tt_body.select(".ttBodyTP")
-	current_stop_list = []
+
+	# Init variables
 	pm = False
 	col = 0
+
+	# Calculate total amount of columns
 	run_total = len(rows[0].select("div"))
+
 	processed_runs = []
 	previous_was_stop = False
+
 	while(col < run_total):
 		current_col = []
 		# Check if we are in AM or PM section by looking for bold text
@@ -275,14 +291,24 @@ def process_stops(table_soup, run_id, line_id, direction_id):
 		# Increment loop values for calculations
 		col += 1
 		run_id += 1
+
+		print_function("  --- %s runs added" % (col+1,), end='\r') 
+
+		# Commit data to db
 		cursor.executemany("""INSERT INTO train_stops_monfri VALUES (?,?,?,?,?,?,?,?)""", final_run)
 		conn.commit()
-	print "  --- %s runs added" % (run_total,)
+
+	
+	# Return run_id to be used in next line
 	return run_id
 
 
 
 def convertTimeToMilliseconds(time,pm = False):
+	# Converts a time in format xx:x into milliseconds
+	# Optional boolean can be passed to indicate time is in PM
+
+	# Split time into 2 parts for calculations
 	time_parts = [int(x) for x in time.split(":")]	
 	if pm == True:
 		return ((time_parts[0] + 12) * 60 * 60) + (time_parts[1] * 60)
@@ -290,12 +316,14 @@ def convertTimeToMilliseconds(time,pm = False):
 		return (time_parts[0] * 60 * 60) + (time_parts[1] * 60)
 
 def populate_directions(test_run=False):
-	# Populate directions
-	
+
+	# Populate directions	
 	if test_run == False:
 		conn = sqlite3.connect("ptv.db")
 		cursor = conn.cursor()
 
+		# Manually add both flinders st options to match PTV timetable data
+		
 		directions = [("City (Flinders Street)",)]
 		cursor.execute("""SELECT * FROM train_lines""")
 		for row in cursor:
@@ -305,7 +333,7 @@ def populate_directions(test_run=False):
 		# Add to db
 		cursor.executemany("""INSERT INTO train_direction VALUES (NULL,?)""", directions)
 		conn.commit()
-		cursor.execute("""SELECT * FROM train_direction""")
+		# cursor.execute("""SELECT * FROM train_direction""")
 	
 def populate_locations(test_run=False):
 	# Populate the train_locations table
@@ -403,6 +431,7 @@ def process_station(station_link, station_name, suburb_name):
 	stop_id = station_link.replace("http://ptv.vic.gov.au/getting-around/stations-and-stops/view/","")
 
 	zone_id = soup.select("table.stationSummary tr")[2].find("td").getText()
+
 	# Zones are either 1,2 or 4 (1/2)
 	if zone_id != "1" and zone_id != "2":
 		zone_id = 4
@@ -418,9 +447,7 @@ def process_station(station_link, station_name, suburb_name):
 	myki_machines = ticket_info[0]
 	myki_checks = ticket_info[1]
 	vline_bookings = ticket_info[2]
-
 	parking_box = ticket_box.findNextSibling("div")
-
 	car_parking = parking_box.select("dd")[0].getText()
 	if parking_box.select("dd")[2].getText() == "Yes":
 		taxi = 1
@@ -431,6 +458,7 @@ def process_station(station_link, station_name, suburb_name):
 	timetables = soup.select("div.expander")
 	lines = [line.getText().replace(" Line","") for line in timetables[0].findAll("a")]
 
+	# Create / seperated list of lines for storing in db field
 	lines_string = "/".join(lines)
 	
 	return [None,location_name, suburb, address, coordinates[0], coordinates[1], stop_id, 
@@ -440,12 +468,15 @@ def process_station(station_link, station_name, suburb_name):
 
 
 def prepare_db(rm_db=True):
-
+	# Create database and tables and add any static data
+	# Table primary keys are labelled _id as this is a requirement
+	# for databases used in Android apps
+	
+	# Remove existing db if rm_db is true
 	if rm_db == True:
 		remove("ptv.db")
 
 	conn = sqlite3.connect("ptv.db")
-
 	cursor = conn.cursor()
 	
 	# Create tables
@@ -563,7 +594,7 @@ def prepare_db(rm_db=True):
 	# Add required android specific tables
 	cursor.execute("""CREATE TABLE IF NOT EXISTS"android_metadata" ("locale" TEXT DEFAULT 'en_US')""")
 	
-	
+	# Wipe any existing static data
 	cursor.execute("""DELETE FROM android_metadata""")
 	cursor.execute("""DELETE FROM fares""")
 
