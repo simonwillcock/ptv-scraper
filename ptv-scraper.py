@@ -1,3 +1,4 @@
+from __future__ import print_function
 from bs4 import BeautifulSoup
 from urllib2 import urlopen
 from urllib import urlencode
@@ -5,7 +6,7 @@ import sqlite3
 from os import remove
 import re
 from pprint import pprint
-from __future__ import print_function
+import logging
 
 BASE_URL = "http://ptv.vic.gov.au/timetables"
 BASE_STOPS_URL = "http://ptv.vic.gov.au/timetables/line/%s"
@@ -13,16 +14,19 @@ BASE_TIMETABLE_URL = "http://ptv.vic.gov.au/timetables/linemain/%s"
 BASE_LINE_URL = "http://ptv.vic.gov.au/route/view/"
 STOP_URL = "http://ptv.vic.gov.au/stop/view/"
 STOP_SUBURB_LIST = "http://ptv.vic.gov.au/getting-around/stations-and-stops/metropolitan-trains/"
-TEST_RUN = True
+TEST_RUN = False
 
 STOP_SKIPPED = "|"
 STOP_IGNORE = " "
 STOP_NOT_IN_RUN = "-"
 
+
+
 def populate_train_lines(test_run=False):
 	# Populate train_lines
 
 	html = urlopen(BASE_URL).read()
+	logging.debug(BASE_URL)
 	soup = BeautifulSoup(html) # , "lxml"
 	line_select = soup.find(id="RouteForm2_RouteUrl")
 	
@@ -90,7 +94,8 @@ def process_line(line,code,run_id,test_run=False):
 	direction_to_city = "R"
 	direction_from_city = "H"
 	directions = [direction_to_city,direction_from_city]
-	print "Processing Stops for the %s Line - %s:" % (line[1],code[0])
+	print("Processing Stops for the %s Line - %s: " % (line[1],code[0]))
+
 	for direction in directions:
 		# print "  - %s" % (direction,)
 
@@ -102,7 +107,7 @@ def process_line(line,code,run_id,test_run=False):
 		direction_soup = soup.find(id="itdLPxx_selLineDir")
 		direction_name = direction_soup.find_all('option', selected=True)[0].get_text().replace("To ","")
 
-		print "   To %s" % direction_name
+		print("   To %s" % direction_name)
 		conn = sqlite3.connect("ptv.db")
 		cursor = conn.cursor()
 
@@ -153,8 +158,10 @@ def get_timetable_page_soup(line, direction, code):
 		# If invalid, page has a string in <strong> tags which is tested below.
 		if soup.find("strong") != None:
 			del time_periods[0]
-			print "  --- Failed. Trying %s" % time_periods[0]
+			print("  --- Failed. Trying %s" % time_periods[0])
+			logging.warning("  --- Failed. Trying %s" % time_periods[0])
 		else:
+			logging.debug(BASE_TIMETABLE_URL % line[0] + "?" + data)
 			return soup
 
 
@@ -222,6 +229,7 @@ def process_stops(table_soup, run_id, line_id, direction_id):
 			# Clean up text before processing:
 			stop = stop.encode('utf-8').replace('\xc2\xa0'," ")
 
+
 			if stop == STOP_SKIPPED:
 				# Add to count of skipped for most recent stop
 				previous_stop[5] += 1
@@ -243,11 +251,16 @@ def process_stops(table_soup, run_id, line_id, direction_id):
 				1 == 1
 			else:
 				# We have a real stop to add and already have line_id and run_id 
+				
+				
 				 
 				# Get stop_id
 				stop_id = cursor.execute("""SELECT train_locations._id 
 					FROM train_locations 
 					WHERE train_locations.location_name =? """,(clean_station_list[index],)).fetchone()[0]
+
+				if stop_id == 27:
+					logging.debug(stop)
 
 				# Calculate time in seconds
 				if pm == True:
@@ -292,7 +305,7 @@ def process_stops(table_soup, run_id, line_id, direction_id):
 		col += 1
 		run_id += 1
 
-		print_function("  --- %s runs added" % (col+1,), end='\r') 
+		print("  --- %s/%s runs added" % (col+1,run_total), end='\r') 
 
 		# Commit data to db
 		cursor.executemany("""INSERT INTO train_stops_monfri VALUES (?,?,?,?,?,?,?,?)""", final_run)
@@ -339,20 +352,22 @@ def populate_locations(test_run=False):
 	# Populate the train_locations table
 
 	html = urlopen(STOP_SUBURB_LIST).read()
+	logging.debug(STOP_SUBURB_LIST)
 	soup = BeautifulSoup(html)
 
 	suburb_list = soup.select("#alpha-list ul li")
 	
 	for suburb in suburb_list:
+		logging.debug(suburb_list)
 		suburb_anchor = suburb.find("a", href=True)
 		suburb_name = suburb_anchor.getText()
-		print "Processing %s" % suburb_name
+		print("Processing %s" % suburb_name)
 		process_suburb(suburb_anchor['href'], suburb_name, test_run)
 
 	conn = sqlite3.connect("ptv.db")
 	cursor = conn.cursor()
 
-	print "===============================\nPopulating linelocation table"
+	print("===============================\nPopulating linelocation table")
 	
 
 	line_locations = []
@@ -396,6 +411,7 @@ def process_suburb(suburb_link, suburb_name, test_run):
 		station_results = cursor.execute("""SELECT * FROM train_locations""")
 	else:
 		html = urlopen(suburb_link).read()
+		logging.debug(suburb_link)
 		soup = BeautifulSoup(html)
 		title = soup.find("h1")
 		station_list = title.findNext("ul").findAll("li")
@@ -406,7 +422,7 @@ def process_suburb(suburb_link, suburb_name, test_run):
 			station_anchor = station.find("a", href=True)
 			station_title = station_anchor.getText()
 			station_title_short = station_title.split(" Railway Station", 1)[0]
-			print "   Processing station: %s" % station_title_short
+			print("   Processing station: %s" % station_title_short)
 			station_results.append(process_station(station_anchor['href'], station_title_short, suburb_name))
 		
 	
@@ -421,6 +437,7 @@ def process_suburb(suburb_link, suburb_name, test_run):
 def process_station(station_link, station_name, suburb_name):
 	# Process station and return list of station properties
 	html = urlopen(station_link).read()
+	logging.debug(station_link)
 	soup = BeautifulSoup(html)
 
 	# Get field data from page
@@ -527,7 +544,8 @@ def prepare_db(rm_db=True):
 		taxi INTEGER,
 		lines TEXT
 	)""")
-	cursor.execute("""DELETE FROM train_stops_monfri""")
+	if TEST_RUN == True:
+		cursor.execute("""DELETE FROM train_stops_monfri""")
 	cursor.execute(""" CREATE TABLE IF NOT EXISTS train_stops_monfri (
 		line_id INTEGER,
 		location_id INTEGER,
@@ -610,7 +628,7 @@ def prepare_db(rm_db=True):
 	conn.commit()
 
 if __name__ == '__main__':
-	
+	logging.basicConfig(filename='ptv_log.txt',level=logging.DEBUG)
 	prepare_db(not TEST_RUN)
 	populate_train_lines(TEST_RUN)
 	populate_directions(TEST_RUN)
