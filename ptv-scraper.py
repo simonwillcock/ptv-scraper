@@ -490,123 +490,81 @@ def prepare_db(rm_db=True):
 	# for databases used in Android apps
 	
 	# Remove existing db if rm_db is true
-	if rm_db == True:
-		remove("ptv.db")
 
 	conn = sqlite3.connect("ptv.db")
 	cursor = conn.cursor()
-	
+	conn.execute('pragma foreign_keys=ON')
+	conn.commit()
+
 	# Create tables
-	cursor.execute(""" CREATE TABLE IF NOT EXISTS train_linelocation (
-		line_id INTEGER,
-		location_id INTEGER,
-		FOREIGN KEY (line_id) REFERENCES train_lines(_id)
-		FOREIGN KEY (location_id) REFERENCES train_locations(_id)
-	)""")
 
-	cursor.execute(""" CREATE TABLE IF NOT EXISTS train_linedirection (
+
+
+	cursor.execute(""" CREATE TABLE IF NOT EXISTS Line (
 		_id INTEGER PRIMARY KEY AUTOINCREMENT,
-		line_id INTEGER,
-		location_id INTEGER,
-		direction_id INTEGER,
-		daytype INTEGER,
-		linedirection_line_id INTEGER,
-		FOREIGN KEY (line_id) REFERENCES train_lines(_id)
-		FOREIGN KEY (location_id) REFERENCES train_locations(_id)
-		FOREIGN KEY (direction_id) REFERENCES train_direction(_id)
+		Name TEXT
 	)""")
 
-	cursor.execute(""" CREATE TABLE IF NOT EXISTS train_direction (
+	cursor.execute(""" CREATE TABLE IF NOT EXISTS Direction (
 		_id INTEGER PRIMARY KEY AUTOINCREMENT,
-		direction_name TEXT
+		LineID TEXT,
+		FOREIGN KEY (LineID) REFERENCES Line(_id) ON UPDATE CASCADE
 	)""")
 
-	cursor.execute(""" CREATE TABLE IF NOT EXISTS train_lines (
-		_id INTEGER PRIMARY KEY AUTOINCREMENT,
-		line_name TEXT,
-		suburbs TEXT
-	)""")
-
-	cursor.execute(""" CREATE TABLE IF NOT EXISTS train_locations (
+	cursor.execute(""" CREATE TABLE IF NOT EXISTS Station (
 		_id INTEGER PRIMARY KEY,
-		location_name TEXT,
-		suburb TEXT,
-		address TEXT,
-		latitude REAL,
-		longitude REAL,
-		stop_id INTEGER,
-		zone_id INTEGER,
-		staff TEXT,
-		myki_machines INTEGER,
-		myki_checks INTEGER,
-		vline_bookings INTEGER,
-		car_parking INTEGER,
-		taxi INTEGER,
-		lines TEXT
-	)""")
-	if TEST_RUN == True:
-		cursor.execute("""DELETE FROM train_stops_monfri""")
-	cursor.execute(""" CREATE TABLE IF NOT EXISTS train_stops_monfri (
-		line_id INTEGER,
-		location_id INTEGER,
-		run_id INTEGER,
-		time INTEGER,
-		destination_location_id INTEGER,
-		num_skipped INTEGER,
-		direction INTEGER,
-		flags INTEGER,
-		FOREIGN KEY (line_id) REFERENCES train_lines(_id),
-		FOREIGN KEY (location_id) REFERENCES train_locations(_id),
-		FOREIGN KEY (destination_location_id) REFERENCES train_locations(_id),
-		FOREIGN KEY (direction) REFERENCES train_direction(_id)
+		Name TEXT,
+		Suburb TEXT,
+		Address TEXT,
+		Latitude REAL,
+		Longitude REAL,
+		PTVID INTEGER,
+		ZoneID INTEGER,
+		Staff TEXT,
+		MykiMachines INTEGER,
+		MykiChecks INTEGER,
+		VlineBookings INTEGER,
+		CarParking INTEGER,
+		Taxi INTEGER
 	)""")
 
-	cursor.execute(""" CREATE TABLE IF NOT EXISTS train_stops_sat (
-		line_id INTEGER,
-		location_id INTEGER,
-		run_id INTEGER,
-		time INTEGER,
-		destination_location_id INTEGER,
-		num_skipped INTEGER,
-		direction INTEGER,
-		flags INTEGER,
-		FOREIGN KEY (line_id) REFERENCES train_lines(_id),
-		FOREIGN KEY (location_id) REFERENCES train_locations(_id),
-		FOREIGN KEY (destination_location_id) REFERENCES train_locations(_id),
-		FOREIGN KEY (direction) REFERENCES train_direction(_id)
+	cursor.execute(""" CREATE TABLE IF NOT EXISTS LineStation (
+		LineID INTEGER,
+		StationID INTEGER,
+		FOREIGN KEY (LineID) REFERENCES Line(_id) ON UPDATE CASCADE,
+		FOREIGN KEY (StationID) REFERENCES Station(_id) ON UPDATE CASCADE
 	)""")
 
-	cursor.execute(""" CREATE TABLE IF NOT EXISTS train_stops_sun (
-		line_id INTEGER,
-		location_id INTEGER,
-		run_id INTEGER,
-		time INTEGER,
-		destination_location_id INTEGER,
-		num_skipped INTEGER,
-		direction INTEGER,
-		flags INTEGER,
-		FOREIGN KEY (line_id) REFERENCES train_lines(_id),
-		FOREIGN KEY (location_id) REFERENCES train_locations(_id),
-		FOREIGN KEY (destination_location_id) REFERENCES train_locations(_id),
-		FOREIGN KEY (direction) REFERENCES train_direction(_id)
+	cursor.execute(""" CREATE TABLE IF NOT EXISTS Stop (
+		_id INTEGER PRIMARY KEY,
+		StationID INTEGER,
+		TimeInSeconds INTEGER,
+		RunID INTEGER,
+		DestinationStationID INTEGER,
+		DirectionID REAL,
+		Flag Text,
+		FOREIGN KEY (StationID) REFERENCES Station(_id) ON UPDATE CASCADE,
+		FOREIGN KEY (DestinationStationID) REFERENCES Station(_id) ON UPDATE CASCADE,
+		FOREIGN KEY (DirectionID) REFERENCES Direction(_id) ON UPDATE CASCADE
 	)""")
 
-	cursor.execute(""" CREATE TABLE IF NOT EXISTS train_config (
-		version_timestamp TEXT,
-		db_version TEXT
+	cursor.execute(""" CREATE TABLE IF NOT EXISTS DayStop (
+		StopID INTEGER,
+		Day INTEGER,
+		FOREIGN KEY (StopID) REFERENCES Stop(_id) ON UPDATE CASCADE	
 	)""")
 
-	cursor.execute(""" CREATE TABLE IF NOT EXISTS special_dates (
-		date TEXT,
-		name TEXT
+	cursor.execute(""" CREATE TABLE IF NOT EXISTS SpecialDate (
+		SpecialDate TEXT,
+		Name TEXT
 	)""")
 
-	cursor.execute(""" CREATE TABLE IF NOT EXISTS fares (
+	cursor.execute(""" CREATE TABLE IF NOT EXISTS Fare (
 		_id INTEGER PRIMARY KEY AUTOINCREMENT,
-		zone_id INTEGER,
-		fare_type INTEGER,
-		fare_length INTEGER,
-		fare_amount REAL
+		ZoneID INTEGER,
+		FareType INTEGER,
+		FareLength INTEGER,
+		FareAmount REAL
 	)""")
 
 	# Add required android specific tables
@@ -614,7 +572,7 @@ def prepare_db(rm_db=True):
 	
 	# Wipe any existing static data
 	cursor.execute("""DELETE FROM android_metadata""")
-	cursor.execute("""DELETE FROM fares""")
+	cursor.execute("""DELETE FROM Fare""")
 
 	# Add static data
 	cursor.execute("""INSERT INTO "android_metadata" VALUES ('en_US')""")
@@ -624,13 +582,13 @@ def prepare_db(rm_db=True):
 	(1,1,24,7.16),(2,1,24,4.96),(4,1,24,12.12),
 	(1,2,24,3.58),(2,2,24,2.48),(4,2,24,6.06)
 	]
-	cursor.executemany("""INSERT INTO fares VALUES (NULL,?,?,?,?)""", fares)
+	cursor.executemany("""INSERT INTO Fare VALUES (NULL,?,?,?,?)""", fares)
 	conn.commit()
 
 if __name__ == '__main__':
 	logging.basicConfig(filename='ptv_log.txt',level=logging.DEBUG)
 	prepare_db(not TEST_RUN)
-	populate_train_lines(TEST_RUN)
-	populate_directions(TEST_RUN)
-	populate_locations(TEST_RUN)
-	populate_stops(TEST_RUN)
+	# populate_train_lines(TEST_RUN)
+	# populate_directions(TEST_RUN)
+	# populate_locations(TEST_RUN)
+	# populate_stops(TEST_RUN)
