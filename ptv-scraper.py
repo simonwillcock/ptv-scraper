@@ -490,6 +490,7 @@ def prepare_db(rm_db=True):
 	# for databases used in Android apps
 	
 	# Remove existing db if rm_db is true
+	remove("ptv.db")
 
 	conn = sqlite3.connect("ptv.db")
 	cursor = conn.cursor()
@@ -505,11 +506,11 @@ def prepare_db(rm_db=True):
 		Name TEXT
 	)""")
 
-	cursor.execute(""" CREATE TABLE IF NOT EXISTS Direction (
-		_id INTEGER PRIMARY KEY AUTOINCREMENT,
-		LineID TEXT,
-		FOREIGN KEY (LineID) REFERENCES Line(_id) ON UPDATE CASCADE
-	)""")
+	# cursor.execute(""" CREATE TABLE IF NOT EXISTS Direction (
+	# 	_id INTEGER PRIMARY KEY AUTOINCREMENT,
+	# 	LineID TEXT,
+	# 	FOREIGN KEY (LineID) REFERENCES Line(_id) ON UPDATE CASCADE
+	# )""")
 
 	cursor.execute(""" CREATE TABLE IF NOT EXISTS Station (
 		_id INTEGER PRIMARY KEY,
@@ -585,9 +586,59 @@ def prepare_db(rm_db=True):
 	cursor.executemany("""INSERT INTO Fare VALUES (NULL,?,?,?,?)""", fares)
 	conn.commit()
 
+def add_test_data():
+	conn = sqlite3.connect("ptv.db")
+	cursor = conn.cursor()
+	line_data = [
+		("Alamein",),
+		("Belgrave",),
+		("Craigieburn",),
+		("Cranbourne",),
+		("South Morang",),
+		("Frankston",),
+		("Glen Waverley",),
+		("Hurstbridge",),
+		("Lilydale",),
+		("Pakenham",),
+		("Sandringham",),
+		("Stony Point",),
+		("Sunbury",),
+		("Upfield",),
+		("Werribee",),
+		("Williamstown",),
+		("Showgrounds - Flemington Racecourse",)
+	]
+	cursor.executemany("""INSERT INTO Line(Name) VALUES (?)""", line_data)
+	conn.commit()
+
+	station_data = [
+		("Balaclava ","Balaclava","-37.869486","144.993514","19956"),
+		("Brighton Beach ","Brighton","-37.926482","144.989157","19950"),
+		("Elsternwick ","Elsternwick","-37.884752","145.000902","19954"),
+		("Gardenvale ","Brighton","-37.896693","145.004165","19953"),
+		("Hampton ","Hampton","-37.937973","145.001466","19949"),
+		("Middle Brighton ","Brighton","-37.915135","144.996298","19951"),
+		("North Brighton ","Brighton","-37.904883","145.002604","19952"),
+		("Prahran ","Prahran","-37.849516","144.98986","19958"),
+		("Ripponlea ","Ripponlea","-37.875908","144.995234","19955"),
+		("Sandringham ","Sandringham","-37.950328","145.004566","19948"),
+		("Windsor ","Windsor","-37.856051","144.992033","19957")
+	]
+	cursor.executemany("""INSERT INTO Station(Name, Suburb, Latitude, Longitude, PTVID) VALUES (?,?,?,?,?)""", station_data)
+	conn.commit()
+
+	linestation_data =[(11,x) for x in range(1,12)]
+	cursor.executemany("""INSERT INTO LineStation VALUES (?,?)""", linestation_data)
+	conn.commit()		
+
+	
+
+
 if __name__ == '__main__':
 	logging.basicConfig(filename='ptv_log.txt',level=logging.DEBUG)
-	prepare_db(not TEST_RUN)
+	prepare_db()
+	add_test_data()
+	
 	# populate_train_lines(TEST_RUN)
 	# populate_directions(TEST_RUN)
 	# populate_locations(TEST_RUN)
